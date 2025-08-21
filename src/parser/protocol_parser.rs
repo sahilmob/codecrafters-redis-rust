@@ -75,8 +75,7 @@ fn pars_string(source: &str) -> Result<(&str, &str), (&str, String)> {
     identifier(source)
 }
 
-pub fn parse(source: &str) -> ParseCommandResult {
-    // let crlf_parser = parser_literal("\r\n");
+pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
     let mut result: ParseCommandResult = Err((source, "Parsing failed".into()));
     if let Some((rest, first_byte)) = parse_first_byte(source) {
         match first_byte {
@@ -108,14 +107,21 @@ pub fn parse(source: &str) -> ParseCommandResult {
                     let (rest, _) = parser_literal("$").parse(re)?;
                     let (rest, _val_length) = integer(rest)?;
                     let (rest, _) = parser_literal("\r\n").parse(rest)?;
-                    let (rest, id) = identifier(rest)?;
+                    let (rest, e) = either(identifier, integer).parse(rest)?;
                     if count + 1 < length {
                         let (r, _) = parser_literal("\r\n").parse(rest)?;
                         re = r;
                     } else {
                         re = rest;
                     }
-                    array.push(id.to_string());
+
+                    let val = match e {
+                        Either::Left(l) => l.to_string(),
+                        Either::Right(r) => r.to_string(),
+                    };
+
+                    array.push(val.to_string());
+
                     count += 1;
                 }
 
@@ -217,6 +223,95 @@ mod test {
             result,
             ParsedCommand::Array(Array {
                 value: vec!["ECHO".into(), "hey".into()]
+            })
+        )
+    }
+
+    #[test]
+    fn parse_command_with_expiry() {
+        let code =
+            "*5\r\n$3\r\nSET\r\n$5\r\napple\r\n$10\r\nstrawberry\r\n$2\r\npx\r\n$3\r\n100\r\n";
+        let (rest, result) = parse(code).expect("Parsing failed");
+        assert_eq!(rest, "");
+        assert_eq!(
+            result,
+            ParsedCommand::Array(Array {
+                value: vec![
+                    "SET".into(),
+                    "apple".into(),
+                    "strawberry".into(),
+                    "px".into(),
+                    "100".into()
+                ]
+            })
+        )
+    }
+
+    #[test]
+    fn parse_command_with_expiry_1() {
+        let code =
+            "*5\r\n$3\r\nSET\r\n$10\r\nstrawberry\r\n$9\r\npineapple\r\n$2\r\npx\r\n$3\r\n100\r\n";
+        let (rest, result) = parse(code).expect("Parsing failed");
+        assert_eq!(rest, "");
+        assert_eq!(
+            result,
+            ParsedCommand::Array(Array {
+                value: vec![
+                    "SET".into(),
+                    "strawberry".into(),
+                    "pineapple".into(),
+                    "px".into(),
+                    "100".into()
+                ]
+            })
+        )
+    }
+
+    #[test]
+    fn parse_command_with_expiry_bytes() {
+        let code =
+            "*5\r\n$3\r\nSET\r\n$10\r\nstrawberry\r\n$9\r\npineapple\r\n$2\r\npx\r\n$3\r\n100\r\n";
+        let bytes = String::from_utf8_lossy(code.as_bytes());
+        let (rest, result) = parse(&bytes).expect("Parsing failed");
+        assert_eq!(rest, "");
+        assert_eq!(
+            result,
+            ParsedCommand::Array(Array {
+                value: vec![
+                    "SET".into(),
+                    "strawberry".into(),
+                    "pineapple".into(),
+                    "px".into(),
+                    "100".into()
+                ]
+            })
+        )
+    }
+
+    #[test]
+    fn parse_array() {
+        let code = "*2\r\n$3\r\nGET\r\n$10\r\nstrawberry\r\n";
+        let bytes = String::from_utf8_lossy(code.as_bytes());
+        let (rest, result) = parse(&bytes).expect("Parsing failed");
+        assert_eq!(rest, "");
+        assert_eq!(
+            result,
+            ParsedCommand::Array(Array {
+                value: vec!["GET".into(), "strawberry".into(),]
+            })
+        )
+    }
+
+    #[test]
+    fn parse_array_1() {
+        let code = "*3\r\n$3\r\nSET\r\n$4\r\npear\r\n$10\r\nstrawberry\r\n";
+        let bytes = String::from_utf8_lossy(code.as_bytes());
+        let (rest, result) = parse(&bytes).expect("Parsing failed");
+        assert_eq!(rest, "");
+        assert_eq!(
+            result,
+            ParsedCommand::Array(Array {
+                value: vec!["SET".into(), "pear".into(), "strawberry".into(),]
             })
         )
     }

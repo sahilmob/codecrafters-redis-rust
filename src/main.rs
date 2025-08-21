@@ -1,19 +1,20 @@
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 mod parser;
+mod storage;
 
 use parser::protocol_parser::parse;
+use parser::protocol_parser::*;
 
-use crate::parser::protocol_parser::*;
+use crate::storage::storage::DB;
 
 #[tokio::main]
 async fn main() {
-    let store: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+    let storage = Arc::new(Mutex::new(DB::new()));
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
@@ -22,7 +23,7 @@ async fn main() {
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
     loop {
         if let Ok((mut stream, _addr)) = listener.accept().await {
-            let store_clone = store.clone();
+            let storage_clone = storage.clone();
             tokio::spawn(async move {
                 loop {
                     let mut buffer = [0; 512];
@@ -31,7 +32,14 @@ async fn main() {
                         break;
                     }
 
-                    let (_rest, command) = parse(&String::from_utf8_lossy(&buffer)).unwrap();
+                    let s = &String::from_utf8_lossy(&buffer);
+                    let s = s.trim();
+                    let s = s
+                        .replace("\\r\\n", "\r\n")
+                        .replace("\\n", "\n")
+                        .replace("\\r", "\r");
+
+                    let (_rest, command) = parse(s.as_str()).unwrap();
 
                     match command {
                         ParsedCommand::SimpleString(simple_string) => {
@@ -56,18 +64,58 @@ async fn main() {
                                     "PING" => {
                                         stream.write(b"+PONG\r\n").await.unwrap();
                                     }
-                                    "SET" => match (value.get(1), value.get(2)) {
-                                        (Some(k), Some(v)) => {
-                                            let mut guard = store_clone.write().await;
-                                            guard.insert(k.clone(), v.clone());
-                                            stream.write(b"+OK\r\n").await.unwrap();
+                                    "SET" => {
+                                        if value.len() == 3 {
+                                            match (value.get(1), value.get(2)) {
+                                                (Some(k), Some(v)) => {
+                                                    {
+                                                        storage_clone
+                                                            .lock()
+                                                            .await
+                                                            .set(k, v, None)
+                                                            .await;
+                                                    }
+
+                                                    stream.write(b"+OK\r\n").await.unwrap();
+                                                }
+
+                                                _ => todo!(),
+                                            }
+                                        } else if value.len() == 5 {
+                                            match (
+                                                value.get(1),
+                                                value.get(2),
+                                                value.get(3),
+                                                value.get(4),
+                                            ) {
+                                                (Some(k), Some(v), Some(cmd), Some(ttl)) => {
+                                                    if cmd.to_lowercase() == "px" {
+                                                        let ttl = ttl.parse::<i64>();
+
+                                                        if let Ok(ttl) = ttl {
+                                                            {
+                                                                storage_clone
+                                                                    .lock()
+                                                                    .await
+                                                                    .set(k, v, Some(ttl))
+                                                                    .await;
+                                                            }
+                                                            stream.write(b"+OK\r\n").await.unwrap();
+                                                        } else {
+                                                            todo!()
+                                                        }
+                                                    } else {
+                                                        todo!()
+                                                    }
+                                                }
+                                                _ => todo!(),
+                                            }
                                         }
-                                        _ => todo!(),
-                                    },
+                                    }
                                     "GET" => match value.get(1) {
                                         Some(k) => {
-                                            let guard = store_clone.read().await;
-                                            if let Some(v) = guard.get(k) {
+                                            let guard = storage_clone.lock().await;
+                                            if let Some(v) = guard.get(k).await {
                                                 let formatted =
                                                     format!("${}\r\n{}\r\n", v.len(), v);
                                                 stream.write(formatted.as_bytes()).await.unwrap();
