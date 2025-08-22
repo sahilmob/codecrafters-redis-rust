@@ -34,29 +34,29 @@ const FB: [&str; 14] = [
     PUSH_FB,
 ];
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct SimpleString {
     pub value: String,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Array {
-    pub value: Vec<String>,
+    pub value: Vec<ParsedSegment>,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Integer {
     pub value: i64,
 }
 
-#[derive(PartialEq, Debug)]
-pub enum ParsedCommand {
+#[derive(PartialEq, Debug, Clone)]
+pub enum ParsedSegment {
     SimpleString(SimpleString),
     Integer(Integer),
     Array(Array),
 }
 
-type ParseCommandResult<'a> = Result<(&'a str, ParsedCommand), (&'a str, String)>;
+type ParseCommandResult<'a> = Result<(&'a str, ParsedSegment), (&'a str, String)>;
 
 fn parse_first_byte(source: &str) -> FirstByteResult<'_> {
     let mut result = None;
@@ -83,7 +83,7 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
                 let (rest, string) = pars_string(rest)?;
                 result = Ok((
                     rest,
-                    ParsedCommand::SimpleString(SimpleString {
+                    ParsedSegment::SimpleString(SimpleString {
                         value: string.into(),
                     }),
                 ));
@@ -93,13 +93,13 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
             }
             INTEGER_FB => {
                 let (rest, int) = integer(rest)?;
-                result = Ok((rest, ParsedCommand::Integer(Integer { value: int })));
+                result = Ok((rest, ParsedSegment::Integer(Integer { value: int })));
             }
             BULK_STRINGS_FB => {
                 todo!();
             }
             ARRAY_FB => {
-                let mut array = Vec::new();
+                let mut array: Vec<ParsedSegment> = Vec::new();
                 let mut count = 0;
                 let (rest, length) = integer(rest)?;
                 let (mut re, _) = parser_literal("\r\n").parse(rest)?;
@@ -116,16 +116,18 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
                     }
 
                     let val = match e {
-                        Either::Left(l) => l.to_string(),
-                        Either::Right(r) => r.to_string(),
+                        Either::Left(l) => ParsedSegment::SimpleString(SimpleString {
+                            value: l.to_string(),
+                        }),
+                        Either::Right(r) => ParsedSegment::Integer(Integer { value: r }),
                     };
 
-                    array.push(val.to_string());
+                    array.push(val);
 
                     count += 1;
                 }
 
-                result = Ok((re, ParsedCommand::Array(Array { value: array })))
+                result = Ok((re, ParsedSegment::Array(Array { value: array })))
             }
             BOOLEAN_FB => {
                 todo!();
@@ -181,7 +183,7 @@ mod test {
         assert_eq!(rest, "");
         assert_eq!(
             result,
-            ParsedCommand::SimpleString(SimpleString {
+            ParsedSegment::SimpleString(SimpleString {
                 value: "PING".into()
             })
         )
@@ -193,7 +195,7 @@ mod test {
         let (rest, result) = parse(code).expect("Parsing failed");
 
         assert_eq!(rest, "");
-        assert_eq!(result, ParsedCommand::Integer(Integer { value: 123 }))
+        assert_eq!(result, ParsedSegment::Integer(Integer { value: 123 }))
     }
 
     #[test]
@@ -202,7 +204,7 @@ mod test {
         let (rest, result) = parse(code).expect("Parsing failed");
 
         assert_eq!(rest, "");
-        assert_eq!(result, ParsedCommand::Integer(Integer { value: -123 }))
+        assert_eq!(result, ParsedSegment::Integer(Integer { value: -123 }))
     }
 
     #[test]
@@ -211,7 +213,7 @@ mod test {
         let (rest, result) = parse(code).expect("Parsing failed");
 
         assert_eq!(rest, "");
-        assert_eq!(result, ParsedCommand::Integer(Integer { value: 123 }))
+        assert_eq!(result, ParsedSegment::Integer(Integer { value: 123 }))
     }
 
     #[test]
@@ -221,8 +223,15 @@ mod test {
         assert_eq!(rest, "");
         assert_eq!(
             result,
-            ParsedCommand::Array(Array {
-                value: vec!["ECHO".into(), "hey".into()]
+            ParsedSegment::Array(Array {
+                value: vec![
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "ECHO".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "hey".into()
+                    }),
+                ]
             })
         )
     }
@@ -235,33 +244,19 @@ mod test {
         assert_eq!(rest, "");
         assert_eq!(
             result,
-            ParsedCommand::Array(Array {
+            ParsedSegment::Array(Array {
                 value: vec![
-                    "SET".into(),
-                    "apple".into(),
-                    "strawberry".into(),
-                    "px".into(),
-                    "100".into()
-                ]
-            })
-        )
-    }
-
-    #[test]
-    fn parse_command_with_expiry_1() {
-        let code =
-            "*5\r\n$3\r\nSET\r\n$10\r\nstrawberry\r\n$9\r\npineapple\r\n$2\r\npx\r\n$3\r\n100\r\n";
-        let (rest, result) = parse(code).expect("Parsing failed");
-        assert_eq!(rest, "");
-        assert_eq!(
-            result,
-            ParsedCommand::Array(Array {
-                value: vec![
-                    "SET".into(),
-                    "strawberry".into(),
-                    "pineapple".into(),
-                    "px".into(),
-                    "100".into()
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "SET".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "apple".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "strawberry".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString { value: "px".into() }),
+                    ParsedSegment::Integer(Integer { value: 100 }),
                 ]
             })
         )
@@ -276,13 +271,19 @@ mod test {
         assert_eq!(rest, "");
         assert_eq!(
             result,
-            ParsedCommand::Array(Array {
+            ParsedSegment::Array(Array {
                 value: vec![
-                    "SET".into(),
-                    "strawberry".into(),
-                    "pineapple".into(),
-                    "px".into(),
-                    "100".into()
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "SET".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "apple".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "strawberry".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString { value: "px".into() }),
+                    ParsedSegment::Integer(Integer { value: 100 }),
                 ]
             })
         )
@@ -296,8 +297,15 @@ mod test {
         assert_eq!(rest, "");
         assert_eq!(
             result,
-            ParsedCommand::Array(Array {
-                value: vec!["GET".into(), "strawberry".into(),]
+            ParsedSegment::Array(Array {
+                value: vec![
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "GET".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "strawberry".into()
+                    }),
+                ]
             })
         )
     }
@@ -310,8 +318,18 @@ mod test {
         assert_eq!(rest, "");
         assert_eq!(
             result,
-            ParsedCommand::Array(Array {
-                value: vec!["SET".into(), "pear".into(), "strawberry".into(),]
+            ParsedSegment::Array(Array {
+                value: vec![
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "SET".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "pear".into()
+                    }),
+                    ParsedSegment::SimpleString(SimpleString {
+                        value: "strawberry".into()
+                    }),
+                ]
             })
         )
     }

@@ -10,7 +10,21 @@ mod storage;
 use parser::protocol_parser::parse;
 use parser::protocol_parser::*;
 
-use crate::storage::storage::DB;
+use crate::storage::storage::{Value, DB};
+
+trait Length {
+    fn len(&self) -> usize;
+}
+
+impl Length for Value {
+    fn len(&self) -> usize {
+        match self {
+            Value::Int(i) => i.to_string().len(),
+            Value::Str(s) => s.len(),
+            Value::List(values) => values.len(),
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -42,7 +56,7 @@ async fn main() {
                     let (_rest, command) = parse(s.as_str()).unwrap();
 
                     match command {
-                        ParsedCommand::SimpleString(simple_string) => {
+                        ParsedSegment::SimpleString(simple_string) => {
                             match simple_string.value.as_str() {
                                 "PING" => {
                                     stream.write(b"+PONG\r\n").await.unwrap();
@@ -52,12 +66,23 @@ async fn main() {
                                 }
                             }
                         }
-                        ParsedCommand::Array(array) => {
+                        ParsedSegment::Array(array) => {
                             let Array { value } = array;
-                            if let Some(command) = value.get(0) {
+                            if let Some(ParsedSegment::SimpleString(SimpleString {
+                                value: command,
+                            })) = value.get(0)
+                            {
                                 match command.as_str() {
                                     "ECHO" => {
-                                        let s = value.get(1).unwrap();
+                                        let s = match value.get(1).unwrap() {
+                                            ParsedSegment::SimpleString(simple_string) => {
+                                                simple_string.value.clone()
+                                            }
+                                            ParsedSegment::Integer(integer) => {
+                                                integer.value.to_string()
+                                            }
+                                            ParsedSegment::Array(array) => unreachable!(),
+                                        };
                                         let formatted = format!("+{}\r\n", s);
                                         stream.write(formatted.as_bytes()).await.unwrap();
                                     }
@@ -67,12 +92,12 @@ async fn main() {
                                     "SET" => {
                                         if value.len() == 3 {
                                             match (value.get(1), value.get(2)) {
-                                                (Some(k), Some(v)) => {
+                                                (Some(ParsedSegment::SimpleString(k)), Some(v)) => {
                                                     {
                                                         storage_clone
                                                             .lock()
                                                             .await
-                                                            .set(k, v, None)
+                                                            .set(&k.value, v.clone(), None)
                                                             .await;
                                                     }
 
@@ -88,22 +113,27 @@ async fn main() {
                                                 value.get(3),
                                                 value.get(4),
                                             ) {
-                                                (Some(k), Some(v), Some(cmd), Some(ttl)) => {
+                                                (
+                                                    Some(ParsedSegment::SimpleString(
+                                                        SimpleString { value: k },
+                                                    )),
+                                                    Some(v),
+                                                    Some(ParsedSegment::SimpleString(
+                                                        SimpleString { value: cmd },
+                                                    )),
+                                                    Some(ParsedSegment::Integer(Integer {
+                                                        value: ttl,
+                                                    })),
+                                                ) => {
                                                     if cmd.to_lowercase() == "px" {
-                                                        let ttl = ttl.parse::<i64>();
-
-                                                        if let Ok(ttl) = ttl {
-                                                            {
-                                                                storage_clone
-                                                                    .lock()
-                                                                    .await
-                                                                    .set(k, v, Some(ttl))
-                                                                    .await;
-                                                            }
-                                                            stream.write(b"+OK\r\n").await.unwrap();
-                                                        } else {
-                                                            todo!()
+                                                        {
+                                                            storage_clone
+                                                                .lock()
+                                                                .await
+                                                                .set(k, v.clone(), Some(*ttl))
+                                                                .await;
                                                         }
+                                                        stream.write(b"+OK\r\n").await.unwrap();
                                                     } else {
                                                         todo!()
                                                     }
@@ -113,7 +143,9 @@ async fn main() {
                                         }
                                     }
                                     "GET" => match value.get(1) {
-                                        Some(k) => {
+                                        Some(ParsedSegment::SimpleString(SimpleString {
+                                            value: k,
+                                        })) => {
                                             let guard = storage_clone.lock().await;
                                             if let Some(v) = guard.get(k).await {
                                                 let formatted =
@@ -125,11 +157,27 @@ async fn main() {
                                         }
                                         _ => todo!(),
                                     },
+                                    "RPUSH" => match (value.get(1), value.get(2)) {
+                                        (
+                                            Some(ParsedSegment::SimpleString(SimpleString {
+                                                value: k,
+                                            })),
+                                            Some(val),
+                                        ) => {
+                                            let mut guard = storage_clone.lock().await;
+                                            let result = guard.set_list_value(k, val.clone()).await;
+                                            let formatted = format!(":{}\r\n", result);
+                                            stream.write(formatted.as_bytes()).await.unwrap();
+                                        }
+                                        _ => {
+                                            stream.write(b"$-1\r\n").await.unwrap();
+                                        }
+                                    },
                                     _ => unreachable!(),
                                 }
                             }
                         }
-                        ParsedCommand::Integer(_integer) => todo!(),
+                        ParsedSegment::Integer(_integer) => todo!(),
                     }
                 }
             });
