@@ -277,10 +277,10 @@ mod test {
                         value: "SET".into()
                     }),
                     ParsedSegment::SimpleString(SimpleString {
-                        value: "apple".into()
+                        value: "strawberry".into()
                     }),
                     ParsedSegment::SimpleString(SimpleString {
-                        value: "strawberry".into()
+                        value: "pineapple".into()
                     }),
                     ParsedSegment::SimpleString(SimpleString { value: "px".into() }),
                     ParsedSegment::Integer(Integer { value: 100 }),

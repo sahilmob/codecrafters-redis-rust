@@ -7,10 +7,7 @@ use std::{
 
 use tokio::{sync::Mutex, time::Instant};
 
-use crate::{
-    parser::protocol_parser::{Array, ParsedSegment},
-    Length,
-};
+use crate::parser::protocol_parser::{Array, ParsedSegment};
 
 #[derive(Clone)]
 pub enum Value {
