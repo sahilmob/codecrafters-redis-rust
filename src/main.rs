@@ -158,16 +158,13 @@ async fn run_server(port: usize) {
                                         }
                                         _ => todo!(),
                                     },
-                                    "RPUSH" => match (value.get(1), value.get(2)) {
-                                        (
-                                            Some(ParsedSegment::SimpleString(SimpleString {
-                                                value: k,
-                                            })),
-                                            Some(val),
-                                        ) => {
+                                    "RPUSH" => match value.get(1) {
+                                        Some(ParsedSegment::SimpleString(SimpleString {
+                                            value: k,
+                                        })) => {
+                                            let values = value[2..].to_vec();
                                             let mut guard = storage_clone.lock().await;
-                                            let result =
-                                                guard.insert_into_list(k, val.clone()).await;
+                                            let result = guard.insert_into_list(k, values).await;
                                             let formatted = format!(":{}\r\n", result);
                                             stream.write(formatted.as_bytes()).await.unwrap();
                                         }

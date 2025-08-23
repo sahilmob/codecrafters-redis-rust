@@ -116,7 +116,7 @@ impl DB {
         }
     }
 
-    pub async fn insert_into_list(&mut self, list_k: &str, v: ParsedSegment) -> usize {
+    pub async fn insert_into_list(&mut self, list_k: &str, v: Vec<ParsedSegment>) -> usize {
         let mut binding = self.storage.inner.lock().await;
 
         let list = binding
@@ -129,7 +129,7 @@ impl DB {
             panic!("Value at key `{list_k}` is not a list");
         };
 
-        l.push(v.into());
+        l.extend(v.iter().map(|i| i.clone().into()).collect::<Vec<Value>>());
 
         l.len()
     }
@@ -199,7 +199,9 @@ mod tests {
         let count = db
             .insert_into_list(
                 k,
-                ParsedSegment::SimpleString(SimpleString { value: v.into() }),
+                vec![ParsedSegment::SimpleString(SimpleString {
+                    value: v.into(),
+                })],
             )
             .await;
         let value = db.get(k).await;
@@ -217,13 +219,45 @@ mod tests {
 
         db.insert_into_list(
             k,
-            ParsedSegment::SimpleString(SimpleString { value: v1.into() }),
+            vec![ParsedSegment::SimpleString(SimpleString {
+                value: v1.into(),
+            })],
         )
         .await;
         let count = db
             .insert_into_list(
                 k,
-                ParsedSegment::SimpleString(SimpleString { value: v2.into() }),
+                vec![ParsedSegment::SimpleString(SimpleString {
+                    value: v2.into(),
+                })],
+            )
+            .await;
+        let value = db.get(k).await;
+
+        assert_eq!(count, 2);
+        assert_eq!(
+            value,
+            Some(Value::List(Vec::from([
+                Value::Str(v1.into()),
+                Value::Str(v2.into())
+            ])))
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_multiple_elements_into_list() {
+        let mut db = DB::new();
+        let k = "test";
+        let v1 = "test1";
+        let v2 = "test2";
+
+        let count = db
+            .insert_into_list(
+                k,
+                vec![
+                    ParsedSegment::SimpleString(SimpleString { value: v1.into() }),
+                    ParsedSegment::SimpleString(SimpleString { value: v2.into() }),
+                ],
             )
             .await;
         let value = db.get(k).await;
