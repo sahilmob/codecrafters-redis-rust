@@ -9,7 +9,7 @@ use tokio::{sync::Mutex, time::Instant};
 
 use crate::parser::protocol_parser::{Array, ParsedSegment};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Int(i64),
     Str(String),
@@ -116,16 +116,17 @@ impl DB {
         }
     }
 
-    pub async fn set_list_value(&mut self, list_k: &str, v: ParsedSegment) -> usize {
+    pub async fn insert_into_list(&mut self, list_k: &str, v: ParsedSegment) -> usize {
         let mut binding = self.storage.inner.lock().await;
-        let mut list = binding.get_mut(list_k);
-        let mut new_list = Value::List(Vec::new());
-        let list = list.get_or_insert(&mut new_list);
 
-        let l = if let Value::List(ref mut l) = list {
+        let list = binding
+            .entry(list_k.to_string())
+            .or_insert_with(|| Value::List(Vec::new())); // Insert if not exists
+
+        let l = if let Value::List(l) = list {
             l
         } else {
-            todo!()
+            panic!("Value at key `{list_k}` is not a list");
         };
 
         l.push(v.into());
@@ -140,5 +141,100 @@ impl Storage {
             inner: Mutex::new(HashMap::new()),
             expiry: Mutex::new(BTreeMap::new()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::time::sleep;
+
+    use crate::parser::protocol_parser::SimpleString;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn inset_string() {
+        let mut db = DB::new();
+        let k = "test";
+        let v = "test";
+        db.set(
+            k,
+            ParsedSegment::SimpleString(SimpleString { value: v.into() }),
+            None,
+        )
+        .await;
+        let value = db.get(k).await;
+
+        assert_eq!(value, Some(Value::Str(v.into())));
+    }
+
+    #[tokio::test]
+    async fn handles_expiry() {
+        let mut db = DB::new();
+        let k = "test";
+        let v = "test";
+        db.set(
+            k,
+            ParsedSegment::SimpleString(SimpleString { value: v.into() }),
+            Some(1000),
+        )
+        .await;
+        let value = db.get(k).await;
+
+        assert_eq!(value, Some(Value::Str(v.into())));
+
+        sleep(Duration::from_millis(1001)).await;
+
+        let value = db.get(k).await;
+
+        assert_eq!(value, None);
+    }
+
+    #[tokio::test]
+    async fn insert_list() {
+        let mut db = DB::new();
+        let k = "test";
+        let v = "test";
+
+        let count = db
+            .insert_into_list(
+                k,
+                ParsedSegment::SimpleString(SimpleString { value: v.into() }),
+            )
+            .await;
+        let value = db.get(k).await;
+
+        assert_eq!(count, 1);
+        assert_eq!(value, Some(Value::List(Vec::from([Value::Str(v.into())]))));
+    }
+
+    #[tokio::test]
+    async fn append_into_list() {
+        let mut db = DB::new();
+        let k = "test";
+        let v1 = "test1";
+        let v2 = "test2";
+
+        db.insert_into_list(
+            k,
+            ParsedSegment::SimpleString(SimpleString { value: v1.into() }),
+        )
+        .await;
+        let count = db
+            .insert_into_list(
+                k,
+                ParsedSegment::SimpleString(SimpleString { value: v2.into() }),
+            )
+            .await;
+        let value = db.get(k).await;
+
+        assert_eq!(count, 2);
+        assert_eq!(
+            value,
+            Some(Value::List(Vec::from([
+                Value::Str(v1.into()),
+                Value::Str(v2.into())
+            ])))
+        );
     }
 }

@@ -26,15 +26,16 @@ impl Length for Value {
     }
 }
 
-#[tokio::main]
-async fn main() {
+async fn run_server(port: usize) {
     let storage = Arc::new(Mutex::new(DB::new()));
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
     // Uncomment this block to pass the first stage
     //
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
     loop {
         if let Ok((mut stream, _addr)) = listener.accept().await {
             let storage_clone = storage.clone();
@@ -165,7 +166,8 @@ async fn main() {
                                             Some(val),
                                         ) => {
                                             let mut guard = storage_clone.lock().await;
-                                            let result = guard.set_list_value(k, val.clone()).await;
+                                            let result =
+                                                guard.insert_into_list(k, val.clone()).await;
                                             let formatted = format!(":{}\r\n", result);
                                             stream.write(formatted.as_bytes()).await.unwrap();
                                         }
@@ -185,4 +187,9 @@ async fn main() {
             println!("Error accepting");
         }
     }
+}
+
+#[tokio::main]
+async fn main() {
+    run_server(6379).await
 }
