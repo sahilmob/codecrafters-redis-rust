@@ -10,7 +10,7 @@ mod storage;
 use parser::protocol_parser::parse;
 use parser::protocol_parser::*;
 
-use crate::storage::storage::{Value, DB};
+use crate::storage::storage::{Serializable, Value, DB};
 
 trait Length {
     fn len(&self) -> usize;
@@ -170,6 +170,27 @@ async fn run_server(port: usize) {
                                         }
                                         _ => {
                                             stream.write(b"$-1\r\n").await.unwrap();
+                                        }
+                                    },
+                                    "LRANGE" => match (value.get(1), value.get(2), value.get(3)) {
+                                        (
+                                            Some(ParsedSegment::SimpleString(SimpleString {
+                                                value: l_key,
+                                            })),
+                                            Some(ParsedSegment::Integer(Integer { value: l })),
+                                            Some(ParsedSegment::Integer(Integer { value: r })),
+                                        ) => {
+                                            let guard = storage_clone.lock().await;
+                                            let result =
+                                                guard.get_list_elements(l_key, *l, *r).await;
+
+                                            stream
+                                                .write(result.serialize().as_bytes())
+                                                .await
+                                                .unwrap();
+                                        }
+                                        _ => {
+                                            todo!()
                                         }
                                     },
                                     _ => unreachable!(),

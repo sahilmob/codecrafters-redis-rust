@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt::Display,
+    fmt::{format, Display},
     sync::Arc,
     time::Duration,
 };
@@ -8,6 +8,10 @@ use std::{
 use tokio::{sync::Mutex, time::Instant};
 
 use crate::parser::protocol_parser::{Array, ParsedSegment};
+
+pub trait Serializable {
+    fn serialize(&self) -> String;
+}
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
@@ -67,6 +71,20 @@ impl Display for Value {
     }
 }
 
+impl Serializable for Value {
+    fn serialize(&self) -> String {
+        match self {
+            Value::Int(i) => format!(":{}\r\n", i.to_string()),
+            Value::Str(s) => format!("${}\r\n{}\r\n", s.len(), s,),
+            Value::List(values) => {
+                let els: Vec<String> = values.iter().map(|v| v.serialize()).collect();
+
+                format!("*{}\r\n{}", els.len(), els.join(""))
+            }
+        }
+    }
+}
+
 pub struct DB {
     storage: Arc<Storage>,
 }
@@ -105,6 +123,27 @@ impl DB {
         }
     }
 
+    pub async fn get_list_elements(&self, l_key: &str, l: i64, r: i64) -> Value {
+        let val = self.get(l_key).await;
+        match val {
+            Some(t) => match t {
+                Value::Int(_) => todo!(),
+                Value::Str(_) => todo!(),
+                Value::List(list) => {
+                    if l >= list.len() as i64 {
+                        return Value::List(Vec::new());
+                    }
+
+                    if r >= list.len() as i64 {
+                        return Value::List(list[(l as usize)..].to_vec());
+                    }
+
+                    return Value::List(list[l as usize..=r as usize].to_vec());
+                }
+            },
+            _ => Value::List(Vec::new()),
+        }
+    }
     pub async fn set(&mut self, k: &str, v: ParsedSegment, expiry: Option<i64>) {
         {
             if let Some(time) = expiry {
@@ -168,7 +207,7 @@ mod tests {
         assert_eq!(value, Some(Value::Str(v.into())));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn handles_expiry() {
         let mut db = DB::new();
         let k = "test";
