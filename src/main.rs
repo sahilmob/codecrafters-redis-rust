@@ -205,9 +205,30 @@ async fn run_server(port: usize) {
                                                 .await
                                                 .unwrap();
                                         }
+
                                         _ => {
                                             todo!()
                                         }
+                                    },
+                                    "LLEN" => match value.get(1) {
+                                        Some(ParsedSegment::SimpleString(SimpleString {
+                                            value,
+                                        })) => {
+                                            let guard = storage_clone.lock().await;
+
+                                            if let Some(l) = guard.get_list_len(&value).await {
+                                                stream
+                                                    .write(format!(":{}\r\n", l).as_bytes())
+                                                    .await
+                                                    .unwrap();
+                                            } else {
+                                                stream
+                                                    .write(format!(":0\r\n").as_bytes())
+                                                    .await
+                                                    .unwrap();
+                                            }
+                                        }
+                                        _ => todo!(),
                                     },
                                     _ => unreachable!(),
                                 }

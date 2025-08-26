@@ -194,6 +194,20 @@ impl DB {
 
         l.len()
     }
+
+    pub async fn get_list_len(&self, k: &str) -> Option<usize> {
+        let guard = self.storage.inner.lock().await;
+
+        if let Some(v) = guard.get(k) {
+            match v {
+                Value::Int(_) => todo!(),
+                Value::Str(_) => todo!(),
+                Value::List(values) => Some(values.len()),
+            }
+        } else {
+            None
+        }
+    }
 }
 
 impl Storage {
