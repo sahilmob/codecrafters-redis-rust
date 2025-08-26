@@ -164,7 +164,23 @@ async fn run_server(port: usize) {
                                         })) => {
                                             let values = value[2..].to_vec();
                                             let mut guard = storage_clone.lock().await;
-                                            let result = guard.insert_into_list(k, values).await;
+                                            let result =
+                                                guard.insert_into_list(k, values, false).await;
+                                            let formatted = format!(":{}\r\n", result);
+                                            stream.write(formatted.as_bytes()).await.unwrap();
+                                        }
+                                        _ => {
+                                            stream.write(b"$-1\r\n").await.unwrap();
+                                        }
+                                    },
+                                    "LPUSH" => match value.get(1) {
+                                        Some(ParsedSegment::SimpleString(SimpleString {
+                                            value: k,
+                                        })) => {
+                                            let values = value[2..].to_vec();
+                                            let mut guard = storage_clone.lock().await;
+                                            let result =
+                                                guard.insert_into_list(k, values, true).await;
                                             let formatted = format!(":{}\r\n", result);
                                             stream.write(formatted.as_bytes()).await.unwrap();
                                         }

@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt::{format, Display},
+    fmt::Display,
     sync::Arc,
     time::Duration,
 };
@@ -162,12 +162,17 @@ impl DB {
         }
     }
 
-    pub async fn insert_into_list(&mut self, list_k: &str, v: Vec<ParsedSegment>) -> usize {
+    pub async fn insert_into_list(
+        &mut self,
+        list_k: &str,
+        v: Vec<ParsedSegment>,
+        prepend: bool,
+    ) -> usize {
         let mut binding = self.storage.inner.lock().await;
 
         let list = binding
             .entry(list_k.to_string())
-            .or_insert_with(|| Value::List(Vec::new())); // Insert if not exists
+            .or_insert_with(|| Value::List(Vec::new()));
 
         let l = if let Value::List(l) = list {
             l
@@ -175,7 +180,17 @@ impl DB {
             panic!("Value at key `{list_k}` is not a list");
         };
 
-        l.extend(v.iter().map(|i| i.clone().into()).collect::<Vec<Value>>());
+        if prepend {
+            l.splice(
+                0..0,
+                v.iter()
+                    .rev()
+                    .map(|i| i.clone().into())
+                    .collect::<Vec<Value>>(),
+            );
+        } else {
+            l.extend(v.iter().map(|i| i.clone().into()).collect::<Vec<Value>>());
+        }
 
         l.len()
     }
@@ -248,12 +263,102 @@ mod tests {
                 vec![ParsedSegment::SimpleString(SimpleString {
                     value: v.into(),
                 })],
+                false,
             )
             .await;
         let value = db.get(k).await;
 
         assert_eq!(count, 1);
         assert_eq!(value, Some(Value::List(Vec::from([Value::Str(v.into())]))));
+    }
+
+    #[tokio::test]
+    async fn prepend_list() {
+        let mut db = DB::new();
+        let k = "test";
+        let v1 = "test1";
+        let v2 = "test2";
+
+        let count = db
+            .insert_into_list(
+                k,
+                vec![ParsedSegment::SimpleString(SimpleString {
+                    value: v1.into(),
+                })],
+                false,
+            )
+            .await;
+        let value = db.get(k).await;
+
+        assert_eq!(count, 1);
+        assert_eq!(value, Some(Value::List(Vec::from([Value::Str(v1.into())]))));
+
+        let count = db
+            .insert_into_list(
+                k,
+                vec![ParsedSegment::SimpleString(SimpleString {
+                    value: v2.into(),
+                })],
+                true,
+            )
+            .await;
+
+        let value = db.get(k).await;
+
+        assert_eq!(count, 2);
+        assert_eq!(
+            value,
+            Some(Value::List(Vec::from([
+                Value::Str(v2.into()),
+                Value::Str(v1.into())
+            ])))
+        );
+    }
+
+    #[tokio::test]
+    async fn prepend_list_many_items() {
+        let mut db = DB::new();
+        let k = "test";
+        let v1 = "test1";
+        let v2 = "test2";
+        let v3 = "test3";
+
+        let count = db
+            .insert_into_list(
+                k,
+                vec![ParsedSegment::SimpleString(SimpleString {
+                    value: v1.into(),
+                })],
+                false,
+            )
+            .await;
+        let value = db.get(k).await;
+
+        assert_eq!(count, 1);
+        assert_eq!(value, Some(Value::List(Vec::from([Value::Str(v1.into())]))));
+
+        let count = db
+            .insert_into_list(
+                k,
+                vec![
+                    ParsedSegment::SimpleString(SimpleString { value: v2.into() }),
+                    ParsedSegment::SimpleString(SimpleString { value: v3.into() }),
+                ],
+                true,
+            )
+            .await;
+
+        let value = db.get(k).await;
+
+        assert_eq!(count, 3);
+        assert_eq!(
+            value,
+            Some(Value::List(Vec::from([
+                Value::Str(v3.into()),
+                Value::Str(v2.into()),
+                Value::Str(v1.into())
+            ])))
+        );
     }
 
     #[tokio::test]
@@ -268,6 +373,7 @@ mod tests {
             vec![ParsedSegment::SimpleString(SimpleString {
                 value: v1.into(),
             })],
+            false,
         )
         .await;
         let count = db
@@ -276,6 +382,7 @@ mod tests {
                 vec![ParsedSegment::SimpleString(SimpleString {
                     value: v2.into(),
                 })],
+                false,
             )
             .await;
         let value = db.get(k).await;
@@ -304,6 +411,7 @@ mod tests {
                     ParsedSegment::SimpleString(SimpleString { value: v1.into() }),
                     ParsedSegment::SimpleString(SimpleString { value: v2.into() }),
                 ],
+                false,
             )
             .await;
         let value = db.get(k).await;
