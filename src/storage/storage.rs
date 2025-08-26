@@ -130,6 +130,13 @@ impl DB {
                 Value::Int(_) => todo!(),
                 Value::Str(_) => todo!(),
                 Value::List(list) => {
+                    let mut l = if l < 0 { list.len() as i64 + l } else { l };
+                    let r = if r < 0 { list.len() as i64 + r } else { r };
+
+                    if l < 0 {
+                        l = 0
+                    }
+
                     if l >= list.len() as i64 {
                         return Value::List(Vec::new());
                     }
