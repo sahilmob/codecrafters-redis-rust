@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt::Display,
     sync::Arc,
     time::Duration,
@@ -17,7 +17,7 @@ pub trait Serializable {
 pub enum Value {
     Int(i64),
     Str(String),
-    List(Vec<Value>),
+    List(VecDeque<Value>),
 }
 
 impl From<ParsedSegment> for Value {
@@ -26,15 +26,17 @@ impl From<ParsedSegment> for Value {
             ParsedSegment::SimpleString(simple_string) => Value::Str(simple_string.value),
             ParsedSegment::Integer(integer) => Value::Int(integer.value),
             ParsedSegment::Array(array) => {
-                let mut result = Vec::new();
+                let mut result = VecDeque::new();
 
                 for i in array.value {
                     match i {
                         ParsedSegment::SimpleString(simple_string) => {
-                            result.push(Value::Str(simple_string.value))
+                            result.push_front(Value::Str(simple_string.value))
                         }
-                        ParsedSegment::Integer(integer) => result.push(Value::Int(integer.value)),
-                        ParsedSegment::Array(array) => result.push(array.into()),
+                        ParsedSegment::Integer(integer) => {
+                            result.push_front(Value::Int(integer.value))
+                        }
+                        ParsedSegment::Array(array) => result.push_front(array.into()),
                     }
                 }
 
@@ -46,14 +48,14 @@ impl From<ParsedSegment> for Value {
 
 impl From<Array> for Value {
     fn from(array: Array) -> Self {
-        let mut result = Vec::new();
+        let mut result = VecDeque::new();
         for i in array.value {
             match i {
                 ParsedSegment::SimpleString(simple_string) => {
-                    result.push(Value::Str(simple_string.value))
+                    result.push_front(Value::Str(simple_string.value))
                 }
-                ParsedSegment::Integer(integer) => result.push(Value::Int(integer.value)),
-                ParsedSegment::Array(array) => result.push(array.into()),
+                ParsedSegment::Integer(integer) => result.push_front(Value::Int(integer.value)),
+                ParsedSegment::Array(array) => result.push_front(array.into()),
             }
         }
 
@@ -138,17 +140,27 @@ impl DB {
                     }
 
                     if l >= list.len() as i64 {
-                        return Value::List(Vec::new());
+                        return Value::List(VecDeque::new());
                     }
 
                     if r >= list.len() as i64 {
-                        return Value::List(list[(l as usize)..].to_vec());
+                        let mut result = VecDeque::new();
+                        for i in list.range((l as usize)..) {
+                            result.push_back(i.clone());
+                        }
+                        return Value::List(result);
                     }
 
-                    return Value::List(list[l as usize..=r as usize].to_vec());
+                    let mut result = VecDeque::new();
+
+                    for i in list.range(l as usize..=r as usize) {
+                        result.push_back(i.clone());
+                    }
+
+                    return Value::List(result);
                 }
             },
-            _ => Value::List(Vec::new()),
+            _ => Value::List(VecDeque::new()),
         }
     }
     pub async fn set(&mut self, k: &str, v: ParsedSegment, expiry: Option<i64>) {
@@ -172,7 +184,7 @@ impl DB {
 
         let list = binding
             .entry(list_k.to_string())
-            .or_insert_with(|| Value::List(Vec::new()));
+            .or_insert_with(|| Value::List(VecDeque::new()));
 
         let l = if let Value::List(l) = list {
             l
@@ -181,13 +193,9 @@ impl DB {
         };
 
         if prepend {
-            l.splice(
-                0..0,
-                v.iter()
-                    .rev()
-                    .map(|i| i.clone().into())
-                    .collect::<Vec<Value>>(),
-            );
+            v.iter()
+                .map(|i| i.clone().into())
+                .for_each(|i| l.push_front(i));
         } else {
             l.extend(v.iter().map(|i| i.clone().into()).collect::<Vec<Value>>());
         }
@@ -203,6 +211,20 @@ impl DB {
                 Value::Int(_) => todo!(),
                 Value::Str(_) => todo!(),
                 Value::List(values) => Some(values.len()),
+            }
+        } else {
+            None
+        }
+    }
+
+    pub async fn pop_list(&self, k: &str) -> Option<Value> {
+        let mut guard = self.storage.inner.lock().await;
+
+        if let Some(v) = guard.get_mut(k) {
+            match v {
+                Value::Int(_) => todo!(),
+                Value::Str(_) => todo!(),
+                Value::List(ref mut list) => list.pop_front().clone(),
             }
         } else {
             None
@@ -283,7 +305,10 @@ mod tests {
         let value = db.get(k).await;
 
         assert_eq!(count, 1);
-        assert_eq!(value, Some(Value::List(Vec::from([Value::Str(v.into())]))));
+        assert_eq!(
+            value,
+            Some(Value::List(VecDeque::from([Value::Str(v.into())])))
+        );
     }
 
     #[tokio::test]
@@ -305,7 +330,10 @@ mod tests {
         let value = db.get(k).await;
 
         assert_eq!(count, 1);
-        assert_eq!(value, Some(Value::List(Vec::from([Value::Str(v1.into())]))));
+        assert_eq!(
+            value,
+            Some(Value::List(VecDeque::from([Value::Str(v1.into())])))
+        );
 
         let count = db
             .insert_into_list(
@@ -322,7 +350,7 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(
             value,
-            Some(Value::List(Vec::from([
+            Some(Value::List(VecDeque::from([
                 Value::Str(v2.into()),
                 Value::Str(v1.into())
             ])))
@@ -349,7 +377,10 @@ mod tests {
         let value = db.get(k).await;
 
         assert_eq!(count, 1);
-        assert_eq!(value, Some(Value::List(Vec::from([Value::Str(v1.into())]))));
+        assert_eq!(
+            value,
+            Some(Value::List(VecDeque::from([Value::Str(v1.into())])))
+        );
 
         let count = db
             .insert_into_list(
@@ -367,7 +398,7 @@ mod tests {
         assert_eq!(count, 3);
         assert_eq!(
             value,
-            Some(Value::List(Vec::from([
+            Some(Value::List(VecDeque::from([
                 Value::Str(v3.into()),
                 Value::Str(v2.into()),
                 Value::Str(v1.into())
@@ -404,7 +435,7 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(
             value,
-            Some(Value::List(Vec::from([
+            Some(Value::List(VecDeque::from([
                 Value::Str(v1.into()),
                 Value::Str(v2.into())
             ])))
@@ -433,10 +464,31 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(
             value,
-            Some(Value::List(Vec::from([
+            Some(Value::List(VecDeque::from([
                 Value::Str(v1.into()),
                 Value::Str(v2.into())
             ])))
         );
+    }
+
+    #[tokio::test]
+    async fn pop_left() {
+        let mut db = DB::new();
+        let k = "test";
+        let v1 = "test1";
+        let v2 = "test2";
+
+        db.insert_into_list(
+            k,
+            vec![
+                ParsedSegment::SimpleString(SimpleString { value: v1.into() }),
+                ParsedSegment::SimpleString(SimpleString { value: v2.into() }),
+            ],
+            false,
+        )
+        .await;
+
+        let result = db.pop_list(k).await;
+        assert_eq!(result, Some(Value::Str(v1.into())))
     }
 }

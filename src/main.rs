@@ -230,6 +230,23 @@ async fn run_server(port: usize) {
                                         }
                                         _ => todo!(),
                                     },
+                                    "LPOP" => match value.get(1) {
+                                        Some(ParsedSegment::SimpleString(SimpleString {
+                                            value: l_key,
+                                        })) => {
+                                            let guard = storage_clone.lock().await;
+
+                                            if let Some(v) = guard.pop_list(&l_key).await {
+                                                stream
+                                                    .write(v.serialize().as_bytes())
+                                                    .await
+                                                    .unwrap();
+                                            } else {
+                                                stream.write(b"$-1\r\n").await.unwrap();
+                                            }
+                                        }
+                                        _ => todo!(),
+                                    },
                                     _ => unreachable!(),
                                 }
                             }
