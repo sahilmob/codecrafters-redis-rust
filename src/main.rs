@@ -236,7 +236,14 @@ async fn run_server(port: usize) {
                                         })) => {
                                             let guard = storage_clone.lock().await;
 
-                                            if let Some(v) = guard.pop_list(&l_key).await {
+                                            let count = match value.get(2) {
+                                                Some(ParsedSegment::Integer(Integer { value })) => {
+                                                    Some(*value)
+                                                }
+                                                _ => None,
+                                            };
+
+                                            if let Some(v) = guard.pop_list(&l_key, count).await {
                                                 stream
                                                     .write(v.serialize().as_bytes())
                                                     .await

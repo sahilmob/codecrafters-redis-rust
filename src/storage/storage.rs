@@ -63,6 +63,17 @@ impl From<Array> for Value {
     }
 }
 
+impl FromIterator<Value> for Option<Value> {
+    fn from_iter<T: IntoIterator<Item = Value>>(iter: T) -> Self {
+        let mut result = VecDeque::new();
+        for i in iter {
+            result.push_front(i.clone());
+        }
+
+        Some(Value::List(result))
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -144,7 +155,7 @@ impl DB {
                     }
 
                     if r >= list.len() as i64 {
-                        let mut result = VecDeque::new();
+                        let mut result: VecDeque<Value> = VecDeque::new();
                         for i in list.range((l as usize)..) {
                             result.push_back(i.clone());
                         }
@@ -217,14 +228,20 @@ impl DB {
         }
     }
 
-    pub async fn pop_list(&self, k: &str) -> Option<Value> {
+    pub async fn pop_list(&self, k: &str, count: Option<i64>) -> Option<Value> {
         let mut guard = self.storage.inner.lock().await;
 
         if let Some(v) = guard.get_mut(k) {
             match v {
                 Value::Int(_) => todo!(),
                 Value::Str(_) => todo!(),
-                Value::List(ref mut list) => list.pop_front().clone(),
+                Value::List(ref mut list) => {
+                    if let Some(c) = count {
+                        list.drain(..(c as usize)).rev().collect()
+                    } else {
+                        list.pop_front().clone()
+                    }
+                }
             }
         } else {
             None
@@ -488,7 +505,46 @@ mod tests {
         )
         .await;
 
-        let result = db.pop_list(k).await;
-        assert_eq!(result, Some(Value::Str(v1.into())))
+        let result = db.pop_list(k, None).await;
+        let count = db.get_list_len(k).await;
+        assert_eq!(result, Some(Value::Str(v1.into())));
+        assert_eq!(count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn pop_left_many() {
+        let mut db = DB::new();
+        let k = "test";
+
+        db.insert_into_list(
+            k,
+            vec![
+                ParsedSegment::SimpleString(SimpleString {
+                    value: "test1".into(),
+                }),
+                ParsedSegment::SimpleString(SimpleString {
+                    value: "test2".into(),
+                }),
+                ParsedSegment::SimpleString(SimpleString {
+                    value: "test3".into(),
+                }),
+                ParsedSegment::SimpleString(SimpleString {
+                    value: "test4".into(),
+                }),
+            ],
+            false,
+        )
+        .await;
+
+        let result = db.pop_list(k, Some(2)).await;
+        let count = db.get_list_len(k).await;
+        assert_eq!(
+            result,
+            Some(Value::List(VecDeque::from([
+                Value::Str("test1".into()),
+                Value::Str("test2".into()),
+            ])))
+        );
+        assert_eq!(count, Some(2));
     }
 }
