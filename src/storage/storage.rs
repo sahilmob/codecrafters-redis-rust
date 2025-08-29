@@ -5,7 +5,10 @@ use std::{
     time::Duration,
 };
 
-use tokio::{sync::Mutex, time::Instant};
+use tokio::{
+    sync::{oneshot::Sender, Mutex},
+    time::Instant,
+};
 
 use crate::parser::protocol_parser::{Array, ParsedSegment};
 
@@ -79,7 +82,7 @@ impl Display for Value {
         match self {
             Value::Int(i) => write!(f, "{}", i.to_string()),
             Value::Str(s) => write!(f, "{}", s),
-            Value::List(values) => todo!(),
+            Value::List(_values) => todo!(),
         }
     }
 }
@@ -98,8 +101,11 @@ impl Serializable for Value {
     }
 }
 
+type Callback = Box<dyn FnOnce(Option<Value>) + Send + 'static>;
+
 pub struct DB {
     storage: Arc<Storage>,
+    blpop_map: Arc<Mutex<HashMap<String, Mutex<VecDeque<Callback>>>>>,
 }
 
 pub struct Storage {
@@ -111,7 +117,10 @@ impl DB {
     pub fn new() -> Self {
         let storage = Arc::new(Storage::new());
 
-        Self { storage }
+        Self {
+            storage,
+            blpop_map: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub async fn get(&self, k: &str) -> Option<Value> {
@@ -191,9 +200,9 @@ impl DB {
         v: Vec<ParsedSegment>,
         prepend: bool,
     ) -> usize {
-        let mut binding = self.storage.inner.lock().await;
+        let mut guard = self.storage.inner.lock().await;
 
-        let list = binding
+        let list = guard
             .entry(list_k.to_string())
             .or_insert_with(|| Value::List(VecDeque::new()));
 
@@ -210,8 +219,13 @@ impl DB {
         } else {
             l.extend(v.iter().map(|i| i.clone().into()).collect::<Vec<Value>>());
         }
+        let l = l.len();
 
-        l.len()
+        drop(guard);
+
+        self.notify_listeners(list_k).await;
+
+        l
     }
 
     pub async fn get_list_len(&self, k: &str) -> Option<usize> {
@@ -247,6 +261,87 @@ impl DB {
             None
         }
     }
+
+    pub async fn pop_list_blocking(&self, k: &str, tx: Sender<Option<Value>>) -> Option<usize> {
+        let mut guard = self.storage.inner.lock().await;
+
+        if let Some(v) = guard.get_mut(k) {
+            match v {
+                Value::Int(_) => todo!(),
+                Value::Str(_) => todo!(),
+                Value::List(ref mut list) => {
+                    let item = list.pop_front();
+                    if let Some(v) = item {
+                        let _ = tx.send(Some(v));
+                        None
+                    } else {
+                        let idx = self
+                            .subscribe_to_list_push(k, |v| {
+                                let _ = tx.send(v);
+                            })
+                            .await;
+                        Some(idx)
+                    }
+                }
+            }
+        } else {
+            let idx = self
+                .subscribe_to_list_push(k, move |v| {
+                    let _ = tx.send(v);
+                })
+                .await;
+            Some(idx)
+        }
+    }
+
+    async fn subscribe_to_list_push<T: FnOnce(Option<Value>) + Send + 'static>(
+        &self,
+        l_key: &str,
+        cb: T,
+    ) -> usize {
+        let mut guard = self.blpop_map.lock().await;
+
+        let mut vec = guard
+            .entry(l_key.into())
+            .or_insert(Mutex::new(VecDeque::new()))
+            .lock()
+            .await;
+
+        vec.push_front(Box::new(cb));
+
+        vec.len() - 1
+    }
+
+    async fn notify_listeners(&self, l_key: &str) {
+        let mut guard = self.blpop_map.lock().await;
+
+        if let Some(l) = guard.get_mut(l_key) {
+            let mut guard = l.lock().await;
+            if let Some(listener) = guard.pop_back() {
+                let v = self.pop_list(l_key, None).await.unwrap();
+                listener(Some(Value::List(VecDeque::from([
+                    Value::Str(l_key.into()),
+                    v,
+                ]))));
+            }
+            drop(guard);
+        }
+
+        drop(guard);
+
+        self.flush_listeners(l_key).await;
+    }
+
+    async fn flush_listeners(&self, l_key: &str) {
+        let mut guard = self.blpop_map.lock().await;
+
+        if let Some(l) = guard.get_mut(l_key) {
+            let mut guard = l.lock().await;
+            while let Some(listener) = guard.pop_front() {
+                listener(None)
+            }
+        }
+    }
 }
 
 impl Storage {
@@ -260,11 +355,11 @@ impl Storage {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::oneshot;
     use tokio::time::sleep;
 
-    use crate::parser::protocol_parser::SimpleString;
-
     use super::*;
+    use crate::parser::protocol_parser::SimpleString;
 
     #[tokio::test]
     async fn inset_string() {
@@ -546,5 +641,40 @@ mod tests {
             ])))
         );
         assert_eq!(count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn pop_blocking() {
+        let mut db = DB::new();
+        let k = "test";
+
+        let (tx1, rx1) = oneshot::channel::<Option<Value>>();
+        let (tx2, rx2) = oneshot::channel::<Option<Value>>();
+
+        let idx1 = db.pop_list_blocking(k, tx1).await.unwrap();
+        let idx2 = db.pop_list_blocking(k, tx2).await.unwrap();
+
+        db.insert_into_list(
+            k,
+            vec![ParsedSegment::SimpleString(SimpleString {
+                value: "test1".into(),
+            })],
+            false,
+        )
+        .await;
+
+        let r1 = rx1.await.unwrap();
+        let r2 = rx2.await.unwrap();
+
+        assert_eq!(idx1, 0);
+        assert_eq!(idx2, 1);
+        assert_eq!(r2, None);
+        assert_eq!(
+            r1,
+            Some(Value::List(VecDeque::from([
+                Value::Str(k.into()),
+                Value::Str("test1".into())
+            ])))
+        );
     }
 }

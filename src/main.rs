@@ -1,16 +1,13 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
-
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::{oneshot, Mutex};
 
 mod parser;
 mod storage;
 
-use parser::protocol_parser::parse;
 use parser::protocol_parser::*;
-
-use crate::storage::storage::{Serializable, Value, DB};
+use storage::storage::{Serializable, Value, DB};
 
 trait Length {
     fn len(&self) -> usize;
@@ -82,7 +79,7 @@ async fn run_server(port: usize) {
                                             ParsedSegment::Integer(integer) => {
                                                 integer.value.to_string()
                                             }
-                                            ParsedSegment::Array(array) => unreachable!(),
+                                            ParsedSegment::Array(_array) => unreachable!(),
                                         };
                                         let formatted = format!("+{}\r\n", s);
                                         stream.write(formatted.as_bytes()).await.unwrap();
@@ -252,7 +249,35 @@ async fn run_server(port: usize) {
                                                 stream.write(b"$-1\r\n").await.unwrap();
                                             }
                                         }
-                                        _ => todo!(),
+                                        _ => unreachable!(),
+                                    },
+                                    "BLPOP" => match value.get(1) {
+                                        Some(ParsedSegment::SimpleString(SimpleString {
+                                            value: l_key,
+                                        })) => {
+                                            let (tx, rx) = oneshot::channel::<Option<Value>>();
+                                            let guard = storage_clone.lock().await;
+                                            if let Some(_idx) =
+                                                guard.pop_list_blocking(&l_key, tx).await
+                                            {
+                                            } else {
+                                            }
+                                            drop(guard);
+                                            if let Ok(v) = rx.await {
+                                                match v {
+                                                    Some(v) => {
+                                                        stream
+                                                            .write(v.serialize().as_bytes())
+                                                            .await
+                                                            .unwrap();
+                                                    }
+                                                    None => {
+                                                        // stream.write(b"$-1\r\n").await.unwrap();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        _ => unreachable!(),
                                     },
                                     _ => unreachable!(),
                                 }
