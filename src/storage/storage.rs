@@ -19,6 +19,7 @@ pub trait Serializable {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Int(i64),
+    Float(f64),
     Str(String),
     List(VecDeque<Value>),
 }
@@ -28,6 +29,7 @@ impl From<ParsedSegment> for Value {
         match value {
             ParsedSegment::SimpleString(simple_string) => Value::Str(simple_string.value),
             ParsedSegment::Integer(integer) => Value::Int(integer.value),
+            ParsedSegment::Float(float) => Value::Float(float.value),
             ParsedSegment::Array(array) => {
                 let mut result = VecDeque::new();
 
@@ -39,6 +41,7 @@ impl From<ParsedSegment> for Value {
                         ParsedSegment::Integer(integer) => {
                             result.push_front(Value::Int(integer.value))
                         }
+                        ParsedSegment::Float(float) => result.push_front(Value::Float(float.value)),
                         ParsedSegment::Array(array) => result.push_front(array.into()),
                     }
                 }
@@ -57,6 +60,7 @@ impl From<Array> for Value {
                 ParsedSegment::SimpleString(simple_string) => {
                     result.push_front(Value::Str(simple_string.value))
                 }
+                ParsedSegment::Float(float) => result.push_front(Value::Float(float.value)),
                 ParsedSegment::Integer(integer) => result.push_front(Value::Int(integer.value)),
                 ParsedSegment::Array(array) => result.push_front(array.into()),
             }
@@ -81,6 +85,7 @@ impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Int(i) => write!(f, "{}", i.to_string()),
+            Value::Float(fl) => write!(f, "{}", fl.to_string()),
             Value::Str(s) => write!(f, "{}", s),
             Value::List(_values) => todo!(),
         }
@@ -91,6 +96,7 @@ impl Serializable for Value {
     fn serialize(&self) -> String {
         match self {
             Value::Int(i) => format!(":{}\r\n", i.to_string()),
+            Value::Float(_) => todo!(),
             Value::Str(s) => format!("${}\r\n{}\r\n", s.len(), s,),
             Value::List(values) => {
                 let els: Vec<String> = values.iter().map(|v| v.serialize()).collect();
@@ -151,6 +157,7 @@ impl DB {
             Some(t) => match t {
                 Value::Int(_) => todo!(),
                 Value::Str(_) => todo!(),
+                Value::Float(_) => todo!(),
                 Value::List(list) => {
                     let mut l = if l < 0 { list.len() as i64 + l } else { l };
                     let r = if r < 0 { list.len() as i64 + r } else { r };
@@ -235,6 +242,7 @@ impl DB {
             match v {
                 Value::Int(_) => todo!(),
                 Value::Str(_) => todo!(),
+                Value::Float(_) => todo!(),
                 Value::List(values) => Some(values.len()),
             }
         } else {
@@ -249,6 +257,7 @@ impl DB {
             match v {
                 Value::Int(_) => todo!(),
                 Value::Str(_) => todo!(),
+                Value::Float(_) => todo!(),
                 Value::List(ref mut list) => {
                     if let Some(c) = count {
                         list.drain(..(c as usize)).rev().collect()
@@ -269,6 +278,7 @@ impl DB {
             match v {
                 Value::Int(_) => todo!(),
                 Value::Str(_) => todo!(),
+                Value::Float(_) => todo!(),
                 Value::List(ref mut list) => {
                     let item = list.pop_front();
                     if let Some(v) = item {
@@ -340,6 +350,17 @@ impl DB {
             while let Some(listener) = guard.pop_front() {
                 listener(None)
             }
+        }
+    }
+
+    async fn unsubscribe(&self, l_key: &str, idx: usize) -> Result<(), String> {
+        let mut guard = self.blpop_map.lock().await;
+        if let Some(list) = guard.get_mut(l_key) {
+            let mut guard = list.lock().await;
+            guard.remove(idx);
+            Ok(())
+        } else {
+            Err("Failed to unsubscribe".into())
         }
     }
 }
@@ -676,5 +697,40 @@ mod tests {
                 Value::Str("test1".into())
             ])))
         );
+    }
+
+    #[tokio::test]
+    async fn handle_unsubscribe_blocking() {
+        let mut db = DB::new();
+        let k = "test";
+
+        let (tx1, _) = oneshot::channel::<Option<Value>>();
+        let (tx2, rx2) = oneshot::channel::<Option<Value>>();
+
+        let idx1 = db.pop_list_blocking(k, tx1).await.unwrap();
+        db.pop_list_blocking(k, tx2).await.unwrap();
+
+        let result = db.unsubscribe(k, idx1).await;
+
+        db.insert_into_list(
+            k,
+            vec![ParsedSegment::SimpleString(SimpleString {
+                value: "test1".into(),
+            })],
+            false,
+        )
+        .await;
+
+        // let r1 = rx1.await.unwrap();
+        // let r2 = rx2.await.unwrap();
+
+        assert_eq!(result, Ok(()));
+        // assert_eq!(
+        //     r2,
+        //     Some(Value::List(VecDeque::from([
+        //         Value::Str(k.into()),
+        //         Value::Str("test1".into())
+        //     ])))
+        // );
     }
 }

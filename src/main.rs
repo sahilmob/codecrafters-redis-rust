@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
@@ -8,6 +9,7 @@ mod storage;
 
 use parser::protocol_parser::*;
 use storage::storage::{Serializable, Value, DB};
+use tokio::time::sleep;
 
 trait Length {
     fn len(&self) -> usize;
@@ -19,6 +21,7 @@ impl Length for Value {
             Value::Int(i) => i.to_string().len(),
             Value::Str(s) => s.len(),
             Value::List(values) => values.len(),
+            Value::Float(f) => f.to_string().len(),
         }
     }
 }
@@ -79,6 +82,7 @@ async fn run_server(port: usize) {
                                             ParsedSegment::Integer(integer) => {
                                                 integer.value.to_string()
                                             }
+                                            ParsedSegment::Float(float) => float.value.to_string(),
                                             ParsedSegment::Array(_array) => unreachable!(),
                                         };
                                         let formatted = format!("+{}\r\n", s);
@@ -255,24 +259,62 @@ async fn run_server(port: usize) {
                                         Some(ParsedSegment::SimpleString(SimpleString {
                                             value: l_key,
                                         })) => {
+                                            let timeout = match value.get(2) {
+                                                Some(v) => match v {
+                                                    ParsedSegment::Integer(integer) => {
+                                                        if integer.value == 0 {
+                                                            Duration::MAX
+                                                        } else {
+                                                            Duration::from_secs(
+                                                                integer.value as u64,
+                                                            )
+                                                        }
+                                                    }
+                                                    ParsedSegment::Float(float) => {
+                                                        Duration::from_millis(
+                                                            (float.value * 1000.0) as u64,
+                                                        )
+                                                    }
+                                                    _ => todo!(),
+                                                },
+                                                None => Duration::MAX,
+                                            };
                                             let (tx, rx) = oneshot::channel::<Option<Value>>();
                                             let guard = storage_clone.lock().await;
                                             if let Some(_idx) =
                                                 guard.pop_list_blocking(&l_key, tx).await
                                             {
+                                                drop(guard);
+                                                tokio::select! {
+                                                    r = rx => {
+                                                        match r {
+                                                            Ok(v) => {
+                                                                if let Some(v) = v {
+                                                                    stream
+                                                                        .write(v.serialize().as_bytes())
+                                                                        .await
+                                                                        .unwrap();
+                                                                }
+
+                                                            },
+                                                            Err(_) => todo!(),
+                                                                }
+                                                            }
+                                                    _ = sleep(timeout) => {
+                                                            stream
+                                                                .write(b"*-1\r\n")
+                                                                .await
+                                                                .unwrap();
+                                                    }
+                                                };
                                             } else {
-                                            }
-                                            drop(guard);
-                                            if let Ok(v) = rx.await {
-                                                match v {
-                                                    Some(v) => {
+                                                drop(guard);
+                                                if let Ok(v) = rx.await {
+                                                    if let Some(v) = v {
                                                         stream
                                                             .write(v.serialize().as_bytes())
                                                             .await
                                                             .unwrap();
-                                                    }
-                                                    None => {
-                                                        // stream.write(b"$-1\r\n").await.unwrap();
                                                     }
                                                 }
                                             }
@@ -284,6 +326,7 @@ async fn run_server(port: usize) {
                             }
                         }
                         ParsedSegment::Integer(_integer) => todo!(),
+                        ParsedSegment::Float(_float) => todo!(),
                     }
                 }
             });

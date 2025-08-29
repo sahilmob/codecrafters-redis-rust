@@ -50,9 +50,15 @@ pub struct Integer {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub struct Float {
+    pub value: f64,
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum ParsedSegment {
     SimpleString(SimpleString),
     Integer(Integer),
+    Float(Float),
     Array(Array),
 }
 
@@ -107,7 +113,7 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
                     let (rest, _) = parser_literal("$").parse(re)?;
                     let (rest, _val_length) = integer(rest)?;
                     let (rest, _) = parser_literal("\r\n").parse(rest)?;
-                    let (rest, e) = either(identifier, integer).parse(rest)?;
+                    let (rest, e) = either(identifier, either(float, integer)).parse(rest)?;
                     if count + 1 < length {
                         let (r, _) = parser_literal("\r\n").parse(rest)?;
                         re = r;
@@ -119,7 +125,10 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
                         Either::Left(l) => ParsedSegment::SimpleString(SimpleString {
                             value: l.to_string(),
                         }),
-                        Either::Right(r) => ParsedSegment::Integer(Integer { value: r }),
+                        Either::Right(r) => match r {
+                            Either::Left(f) => ParsedSegment::Float(Float { value: f }),
+                            Either::Right(i) => ParsedSegment::Integer(Integer { value: i }),
+                        },
                     };
 
                     array.push(val);
@@ -133,7 +142,9 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
                 todo!();
             }
             DOUBLE_FB => {
-                todo!();
+                todo!()
+                // let (rest, int) = (rest)?;
+                // result = Ok((rest, ParsedSegment::Integer(Integer { value: int })));
             }
             BIG_NUMBER_FB => {
                 todo!();

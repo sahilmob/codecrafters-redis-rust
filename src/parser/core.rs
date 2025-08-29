@@ -169,6 +169,47 @@ pub fn integer(source: &'_ str) -> ParseResult<'_, i64> {
     Ok((&source[end_index..], parse_result))
 }
 
+pub fn float(source: &'_ str) -> ParseResult<'_, f64> {
+    let mut chars = source.chars();
+    let mut start_index = 0;
+    let mut end_index = 0;
+
+    if source.starts_with("+") {
+        start_index += 1;
+        chars.next();
+        end_index += 1;
+    }
+
+    if source.starts_with("-") {
+        chars.next();
+        end_index += 1;
+    }
+
+    chars.try_for_each(|c| {
+        if c.is_numeric() {
+            end_index += 1;
+        }
+
+        None
+    });
+
+    if chars.next().is_some_and(|c| c == '.') {
+        end_index += 1;
+    } else {
+        return Err((source, "Expected float".into()));
+    }
+
+    while chars.next().is_some_and(|c| c.is_numeric()) {
+        end_index += 1;
+    }
+
+    let parse_result = source[start_index..end_index]
+        .parse::<f64>()
+        .map_err(|_| (source, "Expected float".into()))?;
+
+    Ok((&source[end_index..], parse_result))
+}
+
 pub fn parser_literal<'a>(target: &'a str) -> impl Parser<'a, ()> {
     move |source: &'a str| {
         source
@@ -253,6 +294,14 @@ mod test {
         let code = "3";
         let (remainder, value) = integer(code).expect("Parsing failed");
         assert_eq!(value, 3);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn parse_float() {
+        let code = "1.3";
+        let (remainder, value) = float(code).expect("Parsing failed");
+        assert_eq!(value, 1.3);
         assert!(remainder.is_empty());
     }
 
