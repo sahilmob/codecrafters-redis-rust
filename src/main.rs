@@ -295,7 +295,6 @@ async fn run_server(port: usize) {
                                                                         .await
                                                                         .unwrap();
                                                                 }
-
                                                             },
                                                             Err(_) => todo!(),
                                                                 }
@@ -320,6 +319,30 @@ async fn run_server(port: usize) {
                                             }
                                         }
                                         _ => unreachable!(),
+                                    },
+                                    "TYPE" => match value.get(1) {
+                                        Some(v) => match v {
+                                            ParsedSegment::SimpleString(s) => {
+                                                let guard = storage_clone.lock().await;
+                                                if let Some(v) = guard.get(&s.value).await {
+                                                    match v {
+                                                        Value::Int(_) => todo!(),
+                                                        Value::Float(_) => todo!(),
+                                                        Value::Str(_) => {
+                                                            stream
+                                                                .write(b"+string\r\n")
+                                                                .await
+                                                                .unwrap();
+                                                        }
+                                                        Value::List(_values) => todo!(),
+                                                    }
+                                                } else {
+                                                    stream.write(b"+none\r\n").await.unwrap();
+                                                }
+                                            }
+                                            _ => todo!(),
+                                        },
+                                        None => todo!(),
                                     },
                                     _ => unreachable!(),
                                 }
