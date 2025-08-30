@@ -1,3 +1,4 @@
+#![allow(unused)]
 type ParseResult<'a, Output> = Result<(&'a str, Output), ParserError<'a>>;
 type ParserError<'a> = (&'a str, String);
 

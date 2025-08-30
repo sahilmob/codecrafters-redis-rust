@@ -1,3 +1,4 @@
+#![allow(unused)]
 use super::core::*;
 
 type FirstByteResult<'a> = Option<(&'a str, &'a str)>;

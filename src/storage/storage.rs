@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fmt::Display,
