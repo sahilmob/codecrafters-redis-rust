@@ -28,21 +28,19 @@ pub enum Value {
 impl From<ParsedSegment> for Value {
     fn from(value: ParsedSegment) -> Self {
         match value {
-            ParsedSegment::SimpleString(simple_string) => Value::Str(simple_string.value),
-            ParsedSegment::Integer(integer) => Value::Int(integer.value),
-            ParsedSegment::Float(float) => Value::Float(float.value),
+            ParsedSegment::SimpleString(simple_string) => Value::Str((*simple_string).clone()),
+            ParsedSegment::Integer(integer) => Value::Int(*integer),
+            ParsedSegment::Float(float) => Value::Float(*float),
             ParsedSegment::Array(array) => {
                 let mut result = VecDeque::new();
 
                 for i in array.value {
                     match i {
                         ParsedSegment::SimpleString(simple_string) => {
-                            result.push_front(Value::Str(simple_string.value))
+                            result.push_front(Value::Str((*simple_string).clone()))
                         }
-                        ParsedSegment::Integer(integer) => {
-                            result.push_front(Value::Int(integer.value))
-                        }
-                        ParsedSegment::Float(float) => result.push_front(Value::Float(float.value)),
+                        ParsedSegment::Integer(integer) => result.push_front(Value::Int(*integer)),
+                        ParsedSegment::Float(float) => result.push_front(Value::Float(*float)),
                         ParsedSegment::Array(array) => result.push_front(array.into()),
                     }
                 }
@@ -61,8 +59,8 @@ impl From<Array> for Value {
                 ParsedSegment::SimpleString(simple_string) => {
                     result.push_front(Value::Str(simple_string.value))
                 }
-                ParsedSegment::Float(float) => result.push_front(Value::Float(float.value)),
-                ParsedSegment::Integer(integer) => result.push_front(Value::Int(integer.value)),
+                ParsedSegment::Float(float) => result.push_front(Value::Float(*float)),
+                ParsedSegment::Integer(integer) => result.push_front(Value::Int(*integer)),
                 ParsedSegment::Array(array) => result.push_front(array.into()),
             }
         }

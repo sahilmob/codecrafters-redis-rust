@@ -1,4 +1,6 @@
 #![allow(unused)]
+use std::ops::Deref;
+
 use super::core::*;
 
 type FirstByteResult<'a> = Option<(&'a str, &'a str)>;
@@ -40,9 +42,25 @@ pub struct SimpleString {
     pub value: String,
 }
 
+impl Deref for SimpleString {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub struct Array {
     pub value: Vec<ParsedSegment>,
+}
+
+impl Deref for Array {
+    type Target = Vec<ParsedSegment>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -50,9 +68,25 @@ pub struct Integer {
     pub value: i64,
 }
 
+impl Deref for Integer {
+    type Target = i64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub struct Float {
     pub value: f64,
+}
+
+impl Deref for Float {
+    type Target = f64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]

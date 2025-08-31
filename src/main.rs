@@ -59,7 +59,7 @@ async fn run_server(port: usize) {
 
                     match command {
                         ParsedSegment::SimpleString(simple_string) => {
-                            match simple_string.value.as_str() {
+                            match simple_string.as_str() {
                                 "PING" => {
                                     stream.write(b"+PONG\r\n").await.unwrap();
                                 }
@@ -78,12 +78,10 @@ async fn run_server(port: usize) {
                                     "ECHO" => {
                                         let s = match value.get(1).unwrap() {
                                             ParsedSegment::SimpleString(simple_string) => {
-                                                simple_string.value.clone()
+                                                simple_string.to_string()
                                             }
-                                            ParsedSegment::Integer(integer) => {
-                                                integer.value.to_string()
-                                            }
-                                            ParsedSegment::Float(float) => float.value.to_string(),
+                                            ParsedSegment::Integer(integer) => integer.to_string(),
+                                            ParsedSegment::Float(float) => float.to_string(),
                                             ParsedSegment::Array(_array) => unreachable!(),
                                         };
                                         let formatted = format!("+{}\r\n", s);
@@ -100,7 +98,7 @@ async fn run_server(port: usize) {
                                                         storage_clone
                                                             .lock()
                                                             .await
-                                                            .set(&k.value, v.clone(), None)
+                                                            .set(&k, v.clone(), None)
                                                             .await;
                                                     }
 
@@ -263,17 +261,15 @@ async fn run_server(port: usize) {
                                             let timeout = match value.get(2) {
                                                 Some(v) => match v {
                                                     ParsedSegment::Integer(integer) => {
-                                                        if integer.value == 0 {
+                                                        if **integer == 0 {
                                                             Duration::MAX
                                                         } else {
-                                                            Duration::from_secs(
-                                                                integer.value as u64,
-                                                            )
+                                                            Duration::from_secs(**integer as u64)
                                                         }
                                                     }
                                                     ParsedSegment::Float(float) => {
                                                         Duration::from_millis(
-                                                            (float.value * 1000.0) as u64,
+                                                            (**float * 1000.0) as u64,
                                                         )
                                                     }
                                                     _ => todo!(),
@@ -325,7 +321,7 @@ async fn run_server(port: usize) {
                                         Some(v) => match v {
                                             ParsedSegment::SimpleString(s) => {
                                                 let guard = storage_clone.lock().await;
-                                                if let Some(v) = guard.get(&s.value).await {
+                                                if let Some(v) = guard.get(&s).await {
                                                     match v {
                                                         Value::Int(_) => todo!(),
                                                         Value::Float(_) => todo!(),
