@@ -78,7 +78,7 @@ fn parse_first_byte(source: &str) -> FirstByteResult<'_> {
     result
 }
 
-fn pars_string(source: &str) -> Result<(&str, &str), (&str, String)> {
+fn parse_string(source: &str) -> Result<(&str, &str), (&str, String)> {
     identifier(source)
 }
 
@@ -87,7 +87,7 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
     if let Some((rest, first_byte)) = parse_first_byte(source) {
         match first_byte {
             SIMPLE_STRING_FB => {
-                let (rest, string) = pars_string(rest)?;
+                let (rest, string) = parse_string(rest)?;
                 result = Ok((
                     rest,
                     ParsedSegment::SimpleString(SimpleString {
@@ -108,13 +108,14 @@ pub fn parse(source: &'_ str) -> ParseCommandResult<'_> {
             ARRAY_FB => {
                 let mut array: Vec<ParsedSegment> = Vec::new();
                 let mut count = 0;
-                let (rest, length) = integer(rest)?;
-                let (mut re, _) = parser_literal("\r\n").parse(rest)?;
+                let (mut re, length) = left(integer, parser_literal("\r\n")).parse(rest)?;
                 while count < length {
-                    let (rest, _) = parser_literal("$").parse(re)?;
-                    let (rest, _val_length) = integer(rest)?;
-                    let (rest, _) = parser_literal("\r\n").parse(rest)?;
-                    let (rest, e) = either(identifier, either(float, integer)).parse(rest)?;
+                    let (rest, _) = pair(parser_literal("$"), integer).parse(re)?;
+                    let (rest, e) = right(
+                        parser_literal("\r\n"),
+                        either(identifier, either(float, integer)),
+                    )
+                    .parse(rest)?;
                     if count + 1 < length {
                         let (r, _) = parser_literal("\r\n").parse(rest)?;
                         re = r;
